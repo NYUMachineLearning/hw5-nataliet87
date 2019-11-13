@@ -3,8 +3,10 @@ title: 'Machine Learning 2019: Tree-Based Methods'
 author: "Sonali Narang"
 date: "10/28/2019"
 output:
-  pdf_document: default
+  html_document:
+    df_print: paged
   pdf: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -22,7 +24,7 @@ library(tree)
 library(randomForest)
 library(MASS)
 library(gbm)
-
+library(ggplot2)
 ```
 ## The Carseats Dataset 
 
@@ -40,6 +42,8 @@ carseats = data.frame(carseats, High)
 
 head(carseats)
 ```
+
+
 
 ## Classification Tree
 
@@ -73,6 +77,9 @@ with(carseats[-train,], table(tree.pred, High))
 mc = (71 + 42) / 150
 mc
 ```
+
+
+
 
 ## Pruning using cross-validation
 Pruning is a method to cut back the tree to prevent over-fitting. 
@@ -197,6 +204,137 @@ abline(h = min(test.err), col = "red")
 1. Attempt a regression tree-based method (not covered in this tutorial) on a reasonable dataset of your choice. Explain the results. 
 
 2. Attempt both a bagging and boosting method on a reasonable dataset of your choice. Explain the results.
+
+
+```{r}
+data("Wage")
+head(Wage)
+str(Wage)
+```
+
+
+Predict wages based on all other inputs (excepting logwage)
+```{r}
+#set seed to make results reproducible 
+set.seed(10)
+
+
+#split data into train and test subset (2000 and 1000 respectively)
+trn_index = sample(1:nrow(Wage), 2000)
+train = Wage[trn_index,]
+test = Wage[-trn_index,]
+
+#Fit train subset of data to model 
+wage_tree = tree(wage~.-logwage, data = train)
+summary(wage_tree)
+
+#Visualize tree
+plot(wage_tree)
+text(wage_tree, pretty=0)
+```
+
+
+## evaluate tree model:
+```{r}
+#Use model on test set to predict wages 
+tree.pred = predict(wage_tree, test, type = "vector")
+
+# Calculate mean square error (training MSE = 1289 -- listed in model summary)
+MSE = mean((tree.pred - test$wage)^2)
+paste("Regression tree MSE: ", MSE)
+
+
+plot(tree.pred, test$wage, xlab = "Predicted wages", ylab = "Actual wages")
+
+```
+
+**Prune:**
+```{r}
+#cross-validation to prune the tree using cv.tree
+wage_cv = cv.tree(wage_tree, FUN = prune.tree)
+
+#Sizes of the trees as they were pruned back, the deviances as the pruning proceeded, and cost complexity parameter used in the process.
+wage_cv
+
+#Visualize 
+plot(wage_cv)
+
+#Prune tree to a size of 12 
+wage_prune = prune.tree(wage_tree, best = 5)
+
+#Visualize tree 
+plot(wage_prune)
+text(wage_prune, pretty=0)
+
+#Evaluate on test set 
+tree.pred = predict(wage_prune, test, type="vector")
+
+
+# Mean Square Error 
+MSE = mean((tree.pred - test$wage)^2)
+paste("Pruned regression tree MSE: ", MSE)
+
+## pruning slightly increased MSE here
+```
+
+
+**Bagging RF:**
+```{r}
+
+#fit training data to model 
+wage_rf = randomForest(wage~.-logwage, data = train)
+wage_rf
+
+#No. of variables tried at each split: 3
+
+
+## Try a range of mtry:
+oob.err = double(7)
+test.err = double(7)
+
+#In a loop of mtry from 1 to 7, fit the randomForest to the train dataset
+for(mtry in 1:7){
+  fit = randomForest(wage~.-logwage, data = train, mtry=mtry, ntree = 350)
+  oob.err[mtry] = fit$mse[350] ##extract Mean-squared-error 
+  pred = predict(fit, test) #predict on test dataset
+  test.err[mtry] = with(test, mean( (wage-pred)^2 )) #compute test error
+}
+
+#Visualize 
+matplot(1:mtry, cbind(test.err, oob.err), pch = 23, col = c("red", "blue"), type = "b", ylab="Mean Squared Error")
+legend("topright", legend = c("OOB", "Test"), pch = 23, col = c("red", "blue"))
+```
+
+
+
+**Boosting:**
+```{r}
+#Gradient Boosting Model
+wage_boost = gbm(wage~.-logwage, data = train, distribution = "gaussian", n.trees = 10000, shrinkage = 0.01, interaction.depth = 4)
+
+#Variable Importance Plot
+summary(wage_boost)
+
+#Visualize important variables of interest
+plot(wage_boost,i="age")
+plot(wage_boost,i="education")
+
+#Predict on test set
+n.trees = seq(from = 100, to = 10000, by = 100)
+pred = predict(wage_boost, newdata = test, n.trees = n.trees)
+dim(pred)
+
+#Visualize Boosting Error Plot
+boost.err = with(test, apply( (pred - wage)^2, 2, mean) )
+plot(n.trees, boost.err, pch = 23, ylab = "Mean Squared Error", xlab = "# Trees", main = "Boosting Test Error")
+abline(h = min(test.err), col = "red")
+
+```
+
+
+
+It looks like 2 or 3 variables tried at the split generates the best model for bagging RF approach, with a mean sq error around 1200. It seems pretty clear that boosting is not a great approach here. After about 500 trees, the model starts to deteriorate. 
+
 
 
 
